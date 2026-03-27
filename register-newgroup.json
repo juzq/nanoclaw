@@ -1,0 +1,1 @@
+{"type": "register_group", "jid": "feishu:your-group-id", "name": "Your New Group", "folder": "newgroup", "trigger": "@Andy", "requiresTrigger": true}

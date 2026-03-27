@@ -52,10 +52,12 @@ class FeishuChannel implements Channel {
     this.dispatcher = new lark.EventDispatcher({});
     this.dispatcher.register({
       'im.message.receive_v1': (data) => this.handleMessage(data),
+      'im.chat.member.bot.added_v1': (data) => this.handleBotAddedToGroup(data),
     });
   }
 
   async connect(): Promise<void> {
+    logger.info('Feishu channel connecting...');
     // Get bot info for filtering self-messages
     try {
       const botInfo = await this.client.request({
@@ -119,6 +121,53 @@ class FeishuChannel implements Channel {
     logger.info('Feishu channel disconnected');
   }
 
+  private async handleBotAddedToGroup(data: any): Promise<void> {
+    logger.info(
+      { rawData: data },
+      'Bot added event received - debugging data structure',
+    );
+
+    // Based on the log you showed, the structure is different
+    // Let's extract chat_id from the correct location
+    let chatId: string | null = null;
+
+    // Try different possible structures
+    if (data.event && data.event.chat_id) {
+      chatId = data.event.chat_id;
+    } else if (data.chat_id) {
+      chatId = data.chat_id;
+    } else if (data.event && typeof data.event === 'object') {
+      // Look for chat_id in the event object properties
+      for (const key in data.event) {
+        if (key.includes('chat') || key.includes('Chat')) {
+          chatId = data.event[key];
+          break;
+        }
+      }
+    }
+
+    if (chatId) {
+      logger.info(
+        { chatId, eventType: 'im.chat.member.bot.added_v1' },
+        'Bot was added to group!',
+      );
+
+      // Convert chat ID to JID format and register the group automatically
+      const chatJid = toJid(chatId);
+      logger.info({ chatJid }, 'Auto-registering new group...');
+
+      // Create a temporary registration message to trigger group setup
+      setTimeout(() => {
+        logger.info(
+          { chatJid },
+          'Would auto-register group here - for now just logging',
+        );
+      }, 1000);
+    } else {
+      logger.warn({ data }, 'Could not find chat_id in bot added event');
+    }
+  }
+
   private async handleMessage(data: {
     sender: {
       sender_id?: { open_id?: string; user_id?: string; union_id?: string };
@@ -135,6 +184,10 @@ class FeishuChannel implements Channel {
     };
   }): Promise<void> {
     const { sender, message } = data;
+    logger.info(
+      { chatId: message.chat_id, chatType: message.chat_type },
+      'Feishu message received',
+    );
     const openId = sender.sender_id?.open_id || '';
 
     // Skip messages from the bot itself

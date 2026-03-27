@@ -1,0 +1,1 @@
+{"type": "register_group", "jid": "feishu:test-bot-added", "name": "Test Bot Added Group", "folder": "bot-added-test", "trigger": "@Andy", "requiresTrigger": true}

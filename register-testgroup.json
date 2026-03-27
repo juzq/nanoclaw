@@ -1,0 +1,1 @@
+{"type": "register_group", "jid": "feishu:testgroup", "name": "Test Group", "folder": "testgroup", "trigger": "@Andy", "requiresTrigger": true}

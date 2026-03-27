@@ -4,6 +4,7 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -123,10 +124,69 @@ function buildVolumeMounts(
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
+
+  // Sync host's ~/.claude/settings.json to group's .claude/ directory
+  // This allows the user to control model and other settings from a central location
+  const hostSettingsFile = path.join(
+    process.env.HOME || os.homedir(),
+    '.claude',
+    'settings.json',
+  );
+  const groupSettingsFile = path.join(groupSessionsDir, 'settings.json');
+
+  logger.debug(
+    {
+      hostSettingsFile,
+      groupSettingsFile,
+      hostExists: fs.existsSync(hostSettingsFile),
+    },
+    'Checking settings sync',
+  );
+
+  if (fs.existsSync(hostSettingsFile)) {
+    // Copy host settings and merge with default agent settings
+    try {
+      const hostSettings = JSON.parse(
+        fs.readFileSync(hostSettingsFile, 'utf-8'),
+      );
+      const defaultSettings = {
+        env: {
+          // Enable agent swarms (subagent orchestration)
+          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+          // Load CLAUDE.md from additional mounted directories
+          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+          // Enable Claude's memory feature
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        },
+      };
+      // Merge: host settings override defaults (user has final say)
+      const mergedSettings = {
+        ...defaultSettings,
+        ...hostSettings,
+        env: {
+          ...defaultSettings.env,
+          ...hostSettings.env,
+        },
+      };
+      fs.writeFileSync(
+        groupSettingsFile,
+        JSON.stringify(mergedSettings, null, 2) + '\n',
+      );
+      logger.debug(
+        { hostSettingsFile, groupSettingsFile },
+        'Synced settings.json to group',
+      );
+    } catch (err) {
+      logger.error({ err, hostSettingsFile }, 'Failed to sync settings.json');
+    }
+  } else {
+    // No host settings, use defaults
+    logger.debug(
+      { hostSettingsFile },
+      'No host settings file found, using defaults',
+    );
     fs.writeFileSync(
-      settingsFile,
+      groupSettingsFile,
       JSON.stringify(
         {
           env: {

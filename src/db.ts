@@ -185,11 +185,17 @@ export function storeChatMetadata(
   const group = isGroup === undefined ? null : isGroup ? 1 : 0;
 
   // Log when a new group chat is detected (especially when bot is added)
+  // Only log if this chat is not already in the database
   if (isGroup && !name) {
-    logger.info(
-      { chatJid, channel },
-      'New group chat detected - bot may have been added to group',
-    );
+    const existing = db
+      .prepare('SELECT jid FROM chats WHERE jid = ?')
+      .get(chatJid);
+    if (!existing) {
+      logger.info(
+        { chatJid, channel },
+        'New group chat detected - bot may have been added to group',
+      );
+    }
   }
 
   if (name) {

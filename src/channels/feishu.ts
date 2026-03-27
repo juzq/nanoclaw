@@ -32,7 +32,6 @@ class FeishuChannel implements Channel {
   private wsClient: lark.WSClient | null = null;
   private dispatcher: lark.EventDispatcher;
   private connected = false;
-  private userNameCache = new Map<string, string>();
   private botOpenId: string | null = null;
   private opts: ChannelOpts;
 
@@ -194,30 +193,15 @@ class FeishuChannel implements Channel {
     if (this.botOpenId && openId === this.botOpenId) return;
 
     const isGroup = message.chat_type === 'group';
-    logger.info(
-      { chatType: message.chat_type, isGroup, messageId: message.message_id },
-      'Feishu group check',
-    );
 
     // Add "了解" reaction to group messages
     if (isGroup) {
-      logger.info(
-        { messageId: message.message_id },
-        'Adding 了解 reaction to group message',
+      this.addReaction(message.message_id).catch((err) =>
+        logger.warn(
+          { err, messageId: message.message_id },
+          'Failed to add 了解 reaction',
+        ),
       );
-      this.addReaction(message.message_id)
-        .then(() =>
-          logger.info(
-            { messageId: message.message_id },
-            'Successfully added 了解 reaction',
-          ),
-        )
-        .catch((err) =>
-          logger.warn(
-            { err, messageId: message.message_id },
-            'Failed to add 了解 reaction',
-          ),
-        );
     }
 
     // Only handle text messages for now
@@ -253,7 +237,6 @@ class FeishuChannel implements Channel {
     }
 
     const chatJid = toJid(message.chat_id);
-    const senderName = await this.getSenderName(openId);
 
     // Emit chat metadata
     const ts = new Date(Number(message.create_time)).toISOString();
@@ -263,7 +246,7 @@ class FeishuChannel implements Channel {
       id: message.message_id,
       chat_jid: chatJid,
       sender: openId,
-      sender_name: senderName,
+      sender_name: openId,
       content: text,
       timestamp: ts,
       is_from_me: false,
@@ -271,27 +254,6 @@ class FeishuChannel implements Channel {
     };
 
     this.opts.onMessage(chatJid, msg);
-  }
-
-  private async getSenderName(openId: string): Promise<string> {
-    if (!openId) return 'Unknown';
-
-    const cached = this.userNameCache.get(openId);
-    if (cached) return cached;
-
-    try {
-      const resp = await this.client.contact.user.get({
-        path: { user_id: openId },
-        params: { user_id_type: 'open_id' },
-      });
-      const name = resp?.data?.user?.name || openId;
-      this.userNameCache.set(openId, name);
-      return name;
-    } catch (err) {
-      logger.debug({ openId, err }, 'Failed to get Feishu user name');
-      this.userNameCache.set(openId, openId);
-      return openId;
-    }
   }
 
   private async addReaction(messageId: string): Promise<void> {

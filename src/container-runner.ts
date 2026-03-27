@@ -105,6 +105,16 @@ function buildVolumeMounts(
         readonly: false,
       });
     }
+
+    // SSH keys for git access
+    const sshDir = path.join(os.homedir(), '.ssh');
+    if (fs.existsSync(sshDir)) {
+      mounts.push({
+        hostPath: sshDir,
+        containerPath: '/home/node/.ssh',
+        readonly: true,
+      });
+    }
   } else {
     // Other groups only get their own folder
     mounts.push({

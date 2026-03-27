@@ -95,6 +95,16 @@ function buildVolumeMounts(
       containerPath: '/workspace/group',
       readonly: false,
     });
+
+    // Global directory (read-write so agent can update global memory)
+    const globalDir = path.join(GROUPS_DIR, 'global');
+    if (fs.existsSync(globalDir)) {
+      mounts.push({
+        hostPath: globalDir,
+        containerPath: '/workspace/global',
+        readonly: false,
+      });
+    }
   } else {
     // Other groups only get their own folder
     mounts.push({
@@ -103,16 +113,26 @@ function buildVolumeMounts(
       readonly: false,
     });
 
-    // Global memory directory (read-only for non-main)
-    // Only directory mounts are supported, not file mounts
+    // Global memory directory
     const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
       mounts.push({
         hostPath: globalDir,
         containerPath: '/workspace/global',
-        readonly: true,
+        readonly: false,
       });
     }
+  }
+
+  // Memory file mount
+  // memory.md lives in the group folder and persists long-term group memory
+  const memoryFile = path.join(groupDir, 'memory.md');
+  if (fs.existsSync(memoryFile)) {
+    mounts.push({
+      hostPath: memoryFile,
+      containerPath: '/workspace/group/memory.md',
+      readonly: false,
+    });
   }
 
   // Per-group Claude sessions directory (isolated from other groups)

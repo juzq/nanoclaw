@@ -375,6 +375,18 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // Load long-term memory from memory.md (both group-specific and global)
+  const memoryPath = '/workspace/memory.md';
+  const globalMemoryPath = '/workspace/global/memory.md';
+  const groupMemory = fs.existsSync(memoryPath) ? fs.readFileSync(memoryPath, 'utf-8') : undefined;
+  const globalMemory = fs.existsSync(globalMemoryPath)
+    ? fs.readFileSync(globalMemoryPath, 'utf-8')
+    : undefined;
+  const memoryContent = [globalMemory, groupMemory].filter(Boolean).join('\n\n');
+  if (memoryContent) {
+    log(`Loaded memory: ${memoryContent.length} chars`);
+  }
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
@@ -398,8 +410,8 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+      systemPrompt: (globalClaudeMd || memoryContent)
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: [globalClaudeMd, memoryContent].filter(Boolean).join('\n\n') }
         : undefined,
       allowedTools: [
         'Bash',

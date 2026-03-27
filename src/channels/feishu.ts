@@ -193,6 +193,33 @@ class FeishuChannel implements Channel {
     // Skip messages from the bot itself
     if (this.botOpenId && openId === this.botOpenId) return;
 
+    const isGroup = message.chat_type === 'group';
+    logger.info(
+      { chatType: message.chat_type, isGroup, messageId: message.message_id },
+      'Feishu group check',
+    );
+
+    // Add "了解" reaction to group messages
+    if (isGroup) {
+      logger.info(
+        { messageId: message.message_id },
+        'Adding 了解 reaction to group message',
+      );
+      this.addReaction(message.message_id)
+        .then(() =>
+          logger.info(
+            { messageId: message.message_id },
+            'Successfully added 了解 reaction',
+          ),
+        )
+        .catch((err) =>
+          logger.warn(
+            { err, messageId: message.message_id },
+            'Failed to add 了解 reaction',
+          ),
+        );
+    }
+
     // Only handle text messages for now
     if (message.message_type !== 'text') {
       logger.debug(
@@ -226,7 +253,6 @@ class FeishuChannel implements Channel {
     }
 
     const chatJid = toJid(message.chat_id);
-    const isGroup = message.chat_type === 'group';
     const senderName = await this.getSenderName(openId);
 
     // Emit chat metadata
@@ -266,6 +292,19 @@ class FeishuChannel implements Channel {
       this.userNameCache.set(openId, openId);
       return openId;
     }
+  }
+
+  private async addReaction(messageId: string): Promise<void> {
+    await this.client.im.messageReaction.create({
+      data: {
+        reaction_type: {
+          emoji_type: 'Get',
+        },
+      },
+      path: {
+        message_id: messageId,
+      },
+    });
   }
 }
 

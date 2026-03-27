@@ -134,6 +134,20 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
     }
   }
 
+  // Create memory.md for long-term group memory
+  const memoryFile = path.join(groupDir, 'memory.md');
+  if (!fs.existsSync(memoryFile)) {
+    const memoryTemplate = path.join(GROUPS_DIR, 'global', 'memory.md');
+    if (fs.existsSync(memoryTemplate)) {
+      fs.writeFileSync(memoryFile, fs.readFileSync(memoryTemplate, 'utf-8'));
+      logger.info({ folder: group.folder }, 'Created memory.md from template');
+    } else {
+      // Fallback: create empty memory file
+      fs.writeFileSync(memoryFile, '# Long-term Memory\n\n');
+      logger.info({ folder: group.folder }, 'Created empty memory.md');
+    }
+  }
+
   logger.info(
     { jid, name: group.name, folder: group.folder },
     'Group registered',

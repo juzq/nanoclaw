@@ -52,9 +52,10 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   attachments?: Array<{
-    type: 'image';
+    type: 'image' | 'file';
     data: string; // base64 encoded
     mimeType: string;
+    filename?: string;
   }>;
 }
 

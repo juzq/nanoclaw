@@ -1,6 +1,8 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { ASSISTANT_NAME } from '../config.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import { ASSISTANT_NAME, GROUPS_DIR } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { Channel, NewMessage } from '../types.js';
@@ -14,6 +16,25 @@ function getProxyAgent(): HttpsProxyAgent<string> | undefined {
     process.env.http_proxy;
   if (!proxy) return undefined;
   return new HttpsProxyAgent(proxy);
+}
+
+// Fix filename encoding - when UTF-8 Chinese is interpreted as Latin-1, it becomes garbled.
+// This attempts to recover the original filename.
+function fixFilenameEncoding(filename: string): string {
+  // If filename looks like garbled Chinese (contains characters from Latin-1 extended set
+  // that are unlikely to be actual French/Spanish/etc text), try to recover UTF-8
+  try {
+    // Convert the string back to bytes assuming it's Latin-1, then decode as UTF-8
+    const bytes = Buffer.from(filename, 'latin1');
+    const decoded = bytes.toString('utf8');
+    // Check if decoded result contains valid Chinese characters
+    if (/[\u4e00-\u9fff]/.test(decoded)) {
+      return decoded;
+    }
+  } catch {
+    // Ignore errors, return original
+  }
+  return filename;
 }
 
 const JID_PREFIX = 'feishu:';
@@ -240,6 +261,73 @@ class FeishuChannel implements Channel {
           timestamp: ts,
           is_from_me: false,
           is_bot_message: sender.sender_type === 'app',
+        };
+        this.opts.onMessage(chatJid, msg);
+      }
+      return;
+    }
+
+    // Handle file messages (Excel, PDF, etc.)
+    if (message.message_type === 'file') {
+      logger.debug(
+        { messageId: message.message_id, chatId: message.chat_id },
+        'Feishu: processing file message',
+      );
+      const fileResult = await this.downloadFile(
+        message.message_id,
+        message.content,
+      );
+      if (fileResult) {
+        const chatJid = toJid(message.chat_id);
+        const ts = new Date(Number(message.create_time)).toISOString();
+        this.opts.onChatMetadata(chatJid, ts, undefined, 'feishu', isGroup);
+
+        // Look up group by chatJid directly
+        const groups = this.opts.registeredGroups();
+        const groupEntry = groups[chatJid];
+        let containerPath = '';
+        if (groupEntry) {
+          // Save file to group directory /workspace/group/files/
+          const groupDir = path.join(GROUPS_DIR, groupEntry.folder);
+          const filesDir = path.join(groupDir, 'files');
+          fs.mkdirSync(filesDir, { recursive: true });
+          const ext = path.extname(fileResult.filename) || '.xlsx';
+          const savedFilename = `${message.message_id}${ext}`;
+          const filePath = path.join(filesDir, savedFilename);
+          const buffer = Buffer.from(fileResult.base64, 'base64');
+          fs.writeFileSync(filePath, buffer);
+          // Container path: /workspace/group/files/filename
+          containerPath = `/workspace/group/files/${savedFilename}`;
+          logger.info(
+            { filePath, containerPath, originalFilename: fileResult.filename },
+            'Feishu file saved to group directory',
+          );
+        } else {
+          logger.warn(
+            { chatJid },
+            'Group not found for chatJid when saving file',
+          );
+        }
+
+        const msg: NewMessage = {
+          id: message.message_id,
+          chat_jid: chatJid,
+          sender: openId,
+          sender_name: openId,
+          content: containerPath
+            ? `[文件: ${fileResult.filename}]\n路径: ${containerPath}`
+            : `[文件: ${fileResult.filename}]`,
+          timestamp: ts,
+          is_from_me: false,
+          is_bot_message: sender.sender_type === 'app',
+          attachments: [
+            {
+              type: 'file',
+              data: fileResult.base64,
+              mimeType: fileResult.mimeType,
+              filename: fileResult.filename,
+            },
+          ],
         };
         this.opts.onMessage(chatJid, msg);
       }
@@ -486,6 +574,97 @@ class FeishuChannel implements Channel {
       logger.error(
         { err, messageId, imageKey },
         'Failed to download Feishu image',
+      );
+      return null;
+    }
+  }
+
+  private async downloadFile(
+    messageId: string,
+    content: string,
+  ): Promise<{ base64: string; mimeType: string; filename: string } | null> {
+    let fileKey: string;
+    let filename = 'file';
+    try {
+      const parsed = JSON.parse(content);
+      fileKey = parsed.file_key;
+      if (parsed.file_name) {
+        // Try to decode URL-encoded filename (飞书有时会 URL 编码中文)
+        let rawFilename = parsed.file_name;
+        try {
+          rawFilename = decodeURIComponent(rawFilename);
+        } catch {
+          // ignore
+        }
+        // Fix encoding when UTF-8 Chinese was misinterpreted as Latin-1
+        filename = fixFilenameEncoding(rawFilename);
+      }
+    } catch {
+      logger.warn({ content }, 'Failed to parse file message content');
+      return null;
+    }
+
+    if (!fileKey) {
+      logger.warn({ content }, 'No file_key in file message');
+      return null;
+    }
+
+    try {
+      const response = await this.client.im.messageResource.get({
+        path: {
+          message_id: messageId,
+          file_key: fileKey,
+        },
+        params: {
+          type: 'file',
+        },
+      });
+
+      // Get content-type from headers
+      const contentType =
+        response.headers?.['content-type'] || 'application/octet-stream';
+
+      // Try to get filename from content-disposition header
+      // Handle RFC 5987 encoding: filename*="UTF-8''%E6%96%87%E4%BB%B6.txt"
+      const contentDisposition = response.headers?.['content-disposition'];
+      if (contentDisposition) {
+        const match = contentDisposition.match(
+          /filename\*=(?:UTF-8''|utf-8'')([^;\n]+)/i,
+        );
+        if (match) {
+          try {
+            filename = decodeURIComponent(match[1]);
+          } catch {
+            filename = match[1];
+          }
+        } else {
+          const simpleMatch = contentDisposition.match(
+            /filename="?([^";\n]+)"?/,
+          );
+          if (simpleMatch) {
+            filename = fixFilenameEncoding(simpleMatch[1]);
+          }
+        }
+      }
+
+      // Get readable stream and collect all chunks
+      const stream = response.getReadableStream();
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.from(chunk));
+      }
+      const buffer = Buffer.concat(chunks);
+      const base64 = buffer.toString('base64');
+      logger.debug(
+        { messageId, fileKey, size: buffer.length, contentType, filename },
+        'Feishu file downloaded',
+      );
+
+      return { base64, mimeType: contentType, filename };
+    } catch (err) {
+      logger.error(
+        { err, messageId, fileKey },
+        'Failed to download Feishu file',
       );
       return null;
     }

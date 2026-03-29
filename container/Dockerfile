@@ -24,14 +24,20 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages for minimax-xlsx skill (use Chinese pip mirror)
+RUN pip3 install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ openpyxl pandas
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+# Install agent-browser and claude-code globally (use Chinese npm mirror)
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install -g agent-browser @anthropic-ai/claude-code
 
 # Create app directory
 WORKDIR /app
@@ -39,8 +45,8 @@ WORKDIR /app
 # Copy package files first for better caching
 COPY agent-runner/package*.json ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies (use Chinese npm mirror)
+RUN npm config set registry https://registry.npmmirror.com && npm install
 
 # Copy source code
 COPY agent-runner/ ./

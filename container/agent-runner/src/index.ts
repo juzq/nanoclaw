@@ -51,9 +51,15 @@ interface SessionsIndex {
 
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | Array<{ type: string; source?: { type: string; media_type: string; data: string }; text?: string }> };
   parent_tool_use_id: null;
   session_id: string;
+}
+
+interface Attachment {
+  type: 'image';
+  mimeType: string;
+  data: string;
 }
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
@@ -69,10 +75,59 @@ class MessageStream {
   private waiting: (() => void) | null = null;
   private done = false;
 
+  /**
+   * Parse message text for image attachments and return both text and attachments.
+   */
+  private parseAttachments(text: string): { text: string; attachments: Attachment[] } {
+    const attachments: Attachment[] = [];
+    // Match <attachment type="image" mimeType="...">base64data...</attachment>
+    const attachmentRegex = /<attachment type="image" mimeType="([^"]+)">([^<]+)<\/attachment>/g;
+    let match;
+    let remainingText = text;
+
+    while ((match = attachmentRegex.exec(text)) !== null) {
+      attachments.push({
+        type: 'image',
+        mimeType: match[1],
+        data: match[2],
+      });
+    }
+
+    // Remove attachment tags from text
+    remainingText = text.replace(attachmentRegex, '').trim();
+
+    return { text: remainingText, attachments };
+  }
+
   push(text: string): void {
+    const { text: cleanText, attachments } = this.parseAttachments(text);
+
+    let content: string | Array<{ type: string; source?: { type: string; media_type: string; data: string }; text?: string }>;
+
+    if (attachments.length > 0) {
+      // Build multimodal content block with image(s) and optional text
+      const contentBlocks: Array<{ type: string; source?: { type: string; media_type: string; data: string }; text?: string }> = [];
+      for (const att of attachments) {
+        contentBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: att.mimeType,
+            data: att.data,
+          },
+        });
+      }
+      if (cleanText) {
+        contentBlocks.push({ type: 'text', text: cleanText });
+      }
+      content = contentBlocks;
+    } else {
+      content = cleanText;
+    }
+
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: '',
     });

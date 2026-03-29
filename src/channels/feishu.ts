@@ -34,6 +34,13 @@ class FeishuChannel implements Channel {
   private connected = false;
   private botOpenId: string | null = null;
   private opts: ChannelOpts;
+  private lastOcrTime = 0;
+  private ocrQueue: Array<{
+    messageId: string;
+    base64: string;
+    resolve: (text: string | undefined) => void;
+  }> = [];
+  private ocrProcessing = false;
 
   constructor(
     private appId: string,
@@ -204,7 +211,164 @@ class FeishuChannel implements Channel {
       );
     }
 
-    // Only handle text messages for now
+    // Handle image messages (only images, no text)
+    if (message.message_type === 'image') {
+      logger.debug(
+        { messageId: message.message_id, chatId: message.chat_id },
+        'Feishu: processing image message',
+      );
+      const imageResult = await this.downloadImage(
+        message.message_id,
+        message.content,
+      );
+      if (imageResult) {
+        const chatJid = toJid(message.chat_id);
+        const ts = new Date(Number(message.create_time)).toISOString();
+        this.opts.onChatMetadata(chatJid, ts, undefined, 'feishu', isGroup);
+
+        // OCR 成功或失败都只发文字，不发图片
+        const content = imageResult.ocrText
+          ? `[图片文字识别结果: ${imageResult.ocrText}]`
+          : '[OCR服务失败，请稍后再试]';
+
+        const msg: NewMessage = {
+          id: message.message_id,
+          chat_jid: chatJid,
+          sender: openId,
+          sender_name: openId,
+          content,
+          timestamp: ts,
+          is_from_me: false,
+          is_bot_message: sender.sender_type === 'app',
+        };
+        this.opts.onMessage(chatJid, msg);
+      }
+      return;
+    }
+
+    // Handle post messages (rich text with possible images + text)
+    if (message.message_type === 'post') {
+      let parsed;
+      try {
+        parsed = JSON.parse(message.content);
+      } catch (err) {
+        logger.warn(
+          { err, messageId: message.message_id },
+          'Failed to parse post content',
+        );
+        return;
+      }
+      let text = '';
+      const images: { base64: string; mimeType: string; ocrText?: string }[] =
+        [];
+
+      // Parse post content - structure is: { title: "", content: [[{ tag: "img"|"text"|"at", ... }]] }
+      const postContent = parsed.content || [];
+      logger.debug(
+        {
+          messageId: message.message_id,
+          postContentLength: postContent.length,
+        },
+        'Post content parsed',
+      );
+
+      for (const paragraph of postContent) {
+        for (const element of paragraph) {
+          if (element.tag === 'text') {
+            text += element.text || '';
+          } else if (element.tag === 'at') {
+            text += `@${element.user_name || '某人'} `;
+          } else if (element.tag === 'img' || element.tag === 'image') {
+            // Download image
+            const imageKey = element.image_key;
+            logger.debug(
+              { messageId: message.message_id, imageKey },
+              'Found image in post',
+            );
+            if (imageKey) {
+              const imageResult = await this.downloadImage(
+                message.message_id,
+                JSON.stringify({ image_key: imageKey }),
+              );
+              if (imageResult) {
+                images.push(imageResult);
+                logger.debug(
+                  {
+                    messageId: message.message_id,
+                    size: imageResult.base64.length,
+                  },
+                  'Image downloaded for post',
+                );
+              }
+            }
+          }
+        }
+        text += '\n';
+      }
+
+      const chatJid = toJid(message.chat_id);
+      const ts = new Date(Number(message.create_time)).toISOString();
+      this.opts.onChatMetadata(chatJid, ts, undefined, 'feishu', isGroup);
+
+      // Build content with images embedded
+      const content = text.trim();
+      logger.debug(
+        {
+          messageId: message.message_id,
+          textLength: text.length,
+          imageCount: images.length,
+        },
+        'Post message processed',
+      );
+
+      if (content || images.length > 0) {
+        // Check if any image has OCR error - if so, return error only, no image
+        const errorImage = images.find(
+          (img) => !img.ocrText || img.ocrText.startsWith('['),
+        );
+        if (errorImage) {
+          const msg: NewMessage = {
+            id: message.message_id,
+            chat_jid: chatJid,
+            sender: openId,
+            sender_name: openId,
+            content: errorImage.ocrText || '[OCR服务失败，请稍后再试]',
+            timestamp: ts,
+            is_from_me: false,
+            is_bot_message: sender.sender_type === 'app',
+          };
+          this.opts.onMessage(chatJid, msg);
+          return;
+        }
+
+        let fullContent = content;
+        // Add OCR text for each image only (no image attachments)
+        for (const img of images) {
+          if (img.ocrText) {
+            fullContent += `\n[图片文字识别结果: ${img.ocrText}]`;
+          }
+        }
+        const msg: NewMessage = {
+          id: message.message_id,
+          chat_jid: chatJid,
+          sender: openId,
+          sender_name: openId,
+          content: fullContent,
+          timestamp: ts,
+          is_from_me: false,
+          is_bot_message: sender.sender_type === 'app',
+        };
+        this.opts.onMessage(chatJid, msg);
+      } else {
+        logger.warn(
+          { messageId: message.message_id },
+          'Post message had no text or images',
+        );
+      }
+      return;
+    }
+
+    // Only handle text messages
     if (message.message_type !== 'text') {
       logger.debug(
         { type: message.message_type },
@@ -266,6 +430,126 @@ class FeishuChannel implements Channel {
       path: {
         message_id: messageId,
       },
+    });
+  }
+
+  private async downloadImage(
+    messageId: string,
+    content: string,
+  ): Promise<{ base64: string; mimeType: string; ocrText?: string } | null> {
+    let imageKey: string;
+    try {
+      const parsed = JSON.parse(content);
+      imageKey = parsed.image_key;
+    } catch {
+      logger.warn({ content }, 'Failed to parse image message content');
+      return null;
+    }
+
+    if (!imageKey) {
+      logger.warn({ content }, 'No image_key in image message');
+      return null;
+    }
+
+    try {
+      const response = await this.client.im.messageResource.get({
+        path: {
+          message_id: messageId,
+          file_key: imageKey,
+        },
+        params: {
+          type: 'image',
+        },
+      });
+
+      // Get content-type from headers
+      const contentType = response.headers?.['content-type'] || 'image/png';
+
+      // Get readable stream and collect all chunks
+      const stream = response.getReadableStream();
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.from(chunk));
+      }
+      const buffer = Buffer.concat(chunks);
+      const base64 = buffer.toString('base64');
+      logger.debug(
+        { messageId, imageKey, size: buffer.length, contentType },
+        'Feishu image downloaded',
+      );
+
+      // Queue OCR request to avoid rate limiting (20 QPS limit)
+      const ocrText = await this.queueOcr(messageId, base64);
+
+      return { base64, mimeType: contentType, ocrText };
+    } catch (err) {
+      logger.error(
+        { err, messageId, imageKey },
+        'Failed to download Feishu image',
+      );
+      return null;
+    }
+  }
+
+  // Process OCR queue with rate limiting (20 QPS = 50ms between requests)
+  private async processOcrQueue(): Promise<void> {
+    if (this.ocrProcessing || this.ocrQueue.length === 0) return;
+    this.ocrProcessing = true;
+
+    while (this.ocrQueue.length > 0) {
+      const now = Date.now();
+      const elapsed = now - this.lastOcrTime;
+      if (elapsed < 500) {
+        await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+      }
+
+      const item = this.ocrQueue.shift()!;
+      this.lastOcrTime = Date.now();
+
+      try {
+        const ocrResult = await this.client.request({
+          method: 'POST',
+          url: 'https://open.feishu.cn/open-apis/optical_char_recognition/v1/image/basic_recognize',
+          data: { image: item.base64 },
+        });
+        if (ocrResult?.data?.text_list && ocrResult.data.text_list.length > 0) {
+          const ocrText = ocrResult.data.text_list.join('\n');
+          logger.debug(
+            { messageId: item.messageId, ocrTextLength: ocrText.length },
+            'Feishu OCR succeeded',
+          );
+          item.resolve(ocrText);
+        } else {
+          item.resolve(undefined);
+        }
+      } catch (ocrErr: any) {
+        const isRateLimit = ocrErr?.response?.data?.code === 99991400;
+        logger.warn(
+          {
+            err: ocrErr,
+            messageId: item.messageId,
+            responseData: ocrErr?.response?.data,
+          },
+          'Feishu OCR failed',
+        );
+        if (isRateLimit) {
+          item.resolve('[OCR服务限流中，请稍后再试]');
+        } else {
+          item.resolve('[OCR服务失败，请稍后再试]');
+        }
+      }
+    }
+
+    this.ocrProcessing = false;
+  }
+
+  private queueOcr(
+    messageId: string,
+    base64: string,
+  ): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      this.ocrQueue.push({ messageId, base64, resolve });
+      this.processOcrQueue();
     });
   }
 }

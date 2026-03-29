@@ -134,16 +134,7 @@ function buildVolumeMounts(
     }
   }
 
-  // Memory file mount
-  // memory.md lives in the group folder and persists long-term group memory
-  const memoryFile = path.join(groupDir, 'memory.md');
-  if (fs.existsSync(memoryFile)) {
-    mounts.push({
-      hostPath: memoryFile,
-      containerPath: '/workspace/group/memory.md',
-      readonly: false,
-    });
-  }
+  // Memory file (memory.md) is already included via the groupDir mount above
 
   // Per-group Claude sessions directory (isolated from other groups)
   // Each group gets their own .claude/ to prevent cross-group session access

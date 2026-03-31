@@ -23,6 +23,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+pkill -f node
+
 # Stop existing instance if running
 if [ -f "/home/juzi/workspace/nanoclaw/nanoclaw.pid" ]; then
   OLD_PID=$(cat "/home/juzi/workspace/nanoclaw/nanoclaw.pid" 2>/dev/null || echo "")

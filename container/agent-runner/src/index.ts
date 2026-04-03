@@ -492,6 +492,14 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        minimax: {
+          command: 'minimax-coding-plan-mcp',
+          args: ['-y'],
+          env: {
+            MINIMAX_API_KEY: process.env.MINIMAX_API_KEY || '',
+            MINIMAX_API_HOST: process.env.MINIMAX_API_HOST || 'https://api.minimax.chat',
+          },
+        },
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

@@ -29,6 +29,9 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# Install minimax-coding-plan-mcp via pip (use Chinese mirror)
+RUN pip3 install --no-cache-dir --break-system-packages -i https://mirrors.aliyun.com/pypi/simple/ minimax-coding-plan-mcp
+
 # Install Python packages for minimax-xlsx skill (use Chinese pip mirror)
 RUN pip3 install --no-cache-dir --break-system-packages -i https://mirrors.aliyun.com/pypi/simple/ openpyxl pandas
 

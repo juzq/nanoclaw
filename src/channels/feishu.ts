@@ -55,13 +55,6 @@ class FeishuChannel implements Channel {
   private connected = false;
   private botOpenId: string | null = null;
   private opts: ChannelOpts;
-  private lastOcrTime = 0;
-  private ocrQueue: Array<{
-    messageId: string;
-    base64: string;
-    resolve: (text: string | undefined) => void;
-  }> = [];
-  private ocrProcessing = false;
 
   constructor(
     private appId: string,
@@ -247,10 +240,9 @@ class FeishuChannel implements Channel {
         const ts = new Date(Number(message.create_time)).toISOString();
         this.opts.onChatMetadata(chatJid, ts, undefined, 'feishu', isGroup);
 
-        // OCR 成功或失败都只发文字，不发图片
-        const content = imageResult.ocrText
-          ? `[图片文字识别结果: ${imageResult.ocrText}]`
-          : '[OCR服务失败，请稍后再试]';
+        // Pass image to container as attachment for minimax understand_image tool
+        // Format: <attachment type="image" mimeType="...">base64data</attachment>
+        const content = `<attachment type="image" mimeType="${imageResult.mimeType}">${imageResult.base64}</attachment>`;
 
         const msg: NewMessage = {
           id: message.message_id,
@@ -291,8 +283,11 @@ class FeishuChannel implements Channel {
           const groupDir = path.join(GROUPS_DIR, groupEntry.folder);
           const filesDir = path.join(groupDir, 'files');
           fs.mkdirSync(filesDir, { recursive: true });
-          const ext = path.extname(fileResult.filename) || '.xlsx';
-          const savedFilename = `${message.message_id}${ext}`;
+          // Use original filename, sanitize for filesystem safety
+          const savedFilename = fileResult.filename.replace(
+            /[\/\\:*?"<>|]/g,
+            '_',
+          );
           const filePath = path.join(filesDir, savedFilename);
           const buffer = Buffer.from(fileResult.base64, 'base64');
           fs.writeFileSync(filePath, buffer);
@@ -347,8 +342,7 @@ class FeishuChannel implements Channel {
         return;
       }
       let text = '';
-      const images: { base64: string; mimeType: string; ocrText?: string }[] =
-        [];
+      const images: { base64: string; mimeType: string }[] = [];
 
       // Parse post content - structure is: { title: "", content: [[{ tag: "img"|"text"|"at", ... }]] }
       const postContent = parsed.content || [];
@@ -367,7 +361,7 @@ class FeishuChannel implements Channel {
           } else if (element.tag === 'at') {
             text += `@${element.user_name || '某人'} `;
           } else if (element.tag === 'img' || element.tag === 'image') {
-            // Download image
+            // Download image and pass to container for minimax understand_image
             const imageKey = element.image_key;
             logger.debug(
               { messageId: message.message_id, imageKey },
@@ -398,7 +392,6 @@ class FeishuChannel implements Channel {
       const ts = new Date(Number(message.create_time)).toISOString();
       this.opts.onChatMetadata(chatJid, ts, undefined, 'feishu', isGroup);
 
-      // Build content with images embedded
       const content = text.trim();
       logger.debug(
         {
@@ -410,31 +403,10 @@ class FeishuChannel implements Channel {
       );
 
       if (content || images.length > 0) {
-        // Check if any image has OCR error - if so, return error only, no image
-        const errorImage = images.find(
-          (img) => !img.ocrText || img.ocrText.startsWith('['),
-        );
-        if (errorImage) {
-          const msg: NewMessage = {
-            id: message.message_id,
-            chat_jid: chatJid,
-            sender: openId,
-            sender_name: openId,
-            content: errorImage.ocrText || '[OCR服务失败，请稍后再试]',
-            timestamp: ts,
-            is_from_me: false,
-            is_bot_message: sender.sender_type === 'app',
-          };
-          this.opts.onMessage(chatJid, msg);
-          return;
-        }
-
+        // Build content with all images as attachments for container
         let fullContent = content;
-        // Add OCR text for each image only (no image attachments)
         for (const img of images) {
-          if (img.ocrText) {
-            fullContent += `\n[图片文字识别结果: ${img.ocrText}]`;
-          }
+          fullContent += `\n<attachment type="image" mimeType="${img.mimeType}">${img.base64}</attachment>`;
         }
         const msg: NewMessage = {
           id: message.message_id,
@@ -524,7 +496,7 @@ class FeishuChannel implements Channel {
   private async downloadImage(
     messageId: string,
     content: string,
-  ): Promise<{ base64: string; mimeType: string; ocrText?: string } | null> {
+  ): Promise<{ base64: string; mimeType: string } | null> {
     let imageKey: string;
     try {
       const parsed = JSON.parse(content);
@@ -566,10 +538,7 @@ class FeishuChannel implements Channel {
         'Feishu image downloaded',
       );
 
-      // Queue OCR request to avoid rate limiting (20 QPS limit)
-      const ocrText = await this.queueOcr(messageId, base64);
-
-      return { base64, mimeType: contentType, ocrText };
+      return { base64, mimeType: contentType };
     } catch (err) {
       logger.error(
         { err, messageId, imageKey },
@@ -668,68 +637,6 @@ class FeishuChannel implements Channel {
       );
       return null;
     }
-  }
-
-  // Process OCR queue with rate limiting (20 QPS = 50ms between requests)
-  private async processOcrQueue(): Promise<void> {
-    if (this.ocrProcessing || this.ocrQueue.length === 0) return;
-    this.ocrProcessing = true;
-
-    while (this.ocrQueue.length > 0) {
-      const now = Date.now();
-      const elapsed = now - this.lastOcrTime;
-      if (elapsed < 500) {
-        await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
-      }
-
-      const item = this.ocrQueue.shift()!;
-      this.lastOcrTime = Date.now();
-
-      try {
-        const ocrResult = await this.client.request({
-          method: 'POST',
-          url: 'https://open.feishu.cn/open-apis/optical_char_recognition/v1/image/basic_recognize',
-          data: { image: item.base64 },
-        });
-        if (ocrResult?.data?.text_list && ocrResult.data.text_list.length > 0) {
-          const ocrText = ocrResult.data.text_list.join('\n');
-          logger.debug(
-            { messageId: item.messageId, ocrTextLength: ocrText.length },
-            'Feishu OCR succeeded',
-          );
-          item.resolve(ocrText);
-        } else {
-          item.resolve(undefined);
-        }
-      } catch (ocrErr: any) {
-        const isRateLimit = ocrErr?.response?.data?.code === 99991400;
-        logger.warn(
-          {
-            err: ocrErr,
-            messageId: item.messageId,
-            responseData: ocrErr?.response?.data,
-          },
-          'Feishu OCR failed',
-        );
-        if (isRateLimit) {
-          item.resolve('[OCR服务限流中，请稍后再试]');
-        } else {
-          item.resolve('[OCR服务失败，请稍后再试]');
-        }
-      }
-    }
-
-    this.ocrProcessing = false;
-  }
-
-  private queueOcr(
-    messageId: string,
-    base64: string,
-  ): Promise<string | undefined> {
-    return new Promise((resolve) => {
-      this.ocrQueue.push({ messageId, base64, resolve });
-      this.processOcrQueue();
-    });
   }
 }
 

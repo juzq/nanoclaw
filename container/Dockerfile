@@ -3,6 +3,10 @@
 
 FROM node:22-slim
 
+# 替换 URIs 行（保留注释）
+RUN sed -i 's|URIs: http://deb.debian.org/debian|URIs: http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's|URIs: http://deb.debian.org/debian-security|URIs: http://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
 # Install system dependencies for Chromium and PDF tools
 RUN apt-get update && apt-get install -y \
     chromium \
@@ -29,11 +33,8 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install minimax-coding-plan-mcp via pip (use Chinese mirror)
-RUN pip3 install --no-cache-dir --break-system-packages -i https://mirrors.aliyun.com/pypi/simple/ minimax-coding-plan-mcp
-
-# Install Python packages for minimax-xlsx skill (use Chinese pip mirror)
-RUN pip3 install --no-cache-dir --break-system-packages -i https://mirrors.aliyun.com/pypi/simple/ openpyxl pandas
+# Install python package via pip (use Chinese mirror)
+RUN pip3 install --no-cache-dir --break-system-packages -i https://mirrors.aliyun.com/pypi/simple/ minimax-coding-plan-mcp openpyxl pandas uv
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium

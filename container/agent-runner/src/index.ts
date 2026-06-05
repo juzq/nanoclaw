@@ -476,7 +476,8 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__wanyi_watermark__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -498,6 +499,13 @@ async function runQuery(
           env: {
             MINIMAX_API_KEY: process.env.MINIMAX_API_KEY || '',
             MINIMAX_API_HOST: process.env.MINIMAX_API_HOST || 'https://api.minimax.chat',
+          },
+        },
+        'wanyi-watermark': {
+          command: 'uvx',
+          args: ['wanyi-watermark'],
+          env: {
+            DASHSCOPE_API_KEY: process.env.DASHSCOPE_API_KEY || '',
           },
         },
       },

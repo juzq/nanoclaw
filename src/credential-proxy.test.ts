@@ -1,10 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
+import fs from 'fs';
 
-const mockEnv: Record<string, string> = {};
-vi.mock('./env.js', () => ({
-  readEnvFile: vi.fn(() => ({ ...mockEnv })),
+const mockSettings: Record<string, string> = {};
+
+vi.mock('fs', () => ({
+  default: {
+    readFileSync: vi.fn((path: string) => {
+      if (path.includes('settings.json')) {
+        return JSON.stringify({ env: { ...mockSettings } });
+      }
+      throw new Error('not found');
+    }),
+  },
+  readFileSync: vi.fn((path: string) => {
+    if (path.includes('settings.json')) {
+      return JSON.stringify({ env: { ...mockSettings } });
+    }
+    throw new Error('not found');
+  }),
 }));
 
 vi.mock('./logger.js', () => ({
@@ -52,6 +67,7 @@ describe('credential-proxy', () => {
 
   beforeEach(async () => {
     lastUpstreamHeaders = {};
+    Object.keys(mockSettings).forEach((k) => delete mockSettings[k]);
 
     upstreamServer = http.createServer((req, res) => {
       lastUpstreamHeaders = { ...req.headers };
@@ -67,39 +83,19 @@ describe('credential-proxy', () => {
   afterEach(async () => {
     await new Promise<void>((r) => proxyServer?.close(() => r()));
     await new Promise<void>((r) => upstreamServer?.close(() => r()));
-    for (const key of Object.keys(mockEnv)) delete mockEnv[key];
   });
 
-  async function startProxy(env: Record<string, string>): Promise<number> {
-    Object.assign(mockEnv, env, {
+  async function startProxy(settings: Record<string, string>): Promise<number> {
+    Object.assign(mockSettings, settings, {
       ANTHROPIC_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
     });
     proxyServer = await startCredentialProxy(0);
     return (proxyServer.address() as AddressInfo).port;
   }
 
-  it('API-key mode injects x-api-key and strips placeholder', async () => {
-    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
-
-    await makeRequest(
-      proxyPort,
-      {
-        method: 'POST',
-        path: '/v1/messages',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': 'placeholder',
-        },
-      },
-      '{}',
-    );
-
-    expect(lastUpstreamHeaders['x-api-key']).toBe('sk-ant-real-key');
-  });
-
   it('OAuth mode replaces Authorization when container sends one', async () => {
     proxyPort = await startProxy({
-      CLAUDE_CODE_OAUTH_TOKEN: 'real-oauth-token',
+      ANTHROPIC_AUTH_TOKEN: 'real-oauth-token',
     });
 
     await makeRequest(
@@ -122,7 +118,7 @@ describe('credential-proxy', () => {
 
   it('OAuth mode does not inject Authorization when container omits it', async () => {
     proxyPort = await startProxy({
-      CLAUDE_CODE_OAUTH_TOKEN: 'real-oauth-token',
+      ANTHROPIC_AUTH_TOKEN: 'real-oauth-token',
     });
 
     // Post-exchange: container uses x-api-key only, no Authorization header
@@ -144,7 +140,9 @@ describe('credential-proxy', () => {
   });
 
   it('strips hop-by-hop headers', async () => {
-    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
+    proxyPort = await startProxy({
+      ANTHROPIC_AUTH_TOKEN: 'real-oauth-token',
+    });
 
     await makeRequest(
       proxyPort,
@@ -169,8 +167,8 @@ describe('credential-proxy', () => {
   });
 
   it('returns 502 when upstream is unreachable', async () => {
-    Object.assign(mockEnv, {
-      ANTHROPIC_API_KEY: 'sk-ant-real-key',
+    Object.assign(mockSettings, {
+      ANTHROPIC_AUTH_TOKEN: 'real-oauth-token',
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:59999',
     });
     proxyServer = await startCredentialProxy(0);

@@ -1,15 +1,30 @@
 import os from 'os';
 import path from 'path';
+import fs from 'fs';
 
 import { readEnvFile } from './env.js';
 import { isValidTimezone } from './timezone.js';
+
+const HOME_DIR = process.env.HOME || os.homedir();
+const SETTINGS_FILE = path.join(HOME_DIR, '.claude', 'settings.json');
+
+function readSettingsJson(): Record<string, string> {
+  try {
+    const content = fs.readFileSync(SETTINGS_FILE, 'utf-8');
+    const settings = JSON.parse(content);
+    return settings.env || {};
+  } catch {
+    return {};
+  }
+}
+
+const settingsConfig = readSettingsJson();
 
 // Secrets (API keys, tokens) are NOT read here — they are loaded only
 // by the credential proxy (credential-proxy.ts), never exposed to containers.
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
-  'MINIMAX_API_KEY',
   'MINIMAX_API_HOST',
 ]);
 
@@ -18,16 +33,13 @@ export const ASSISTANT_NAME =
 export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER ||
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
-export const MINIMAX_API_KEY =
-  process.env.MINIMAX_API_KEY || envConfig.MINIMAX_API_KEY || '';
-export const MINIMAX_API_HOST =
-  process.env.MINIMAX_API_HOST || envConfig.MINIMAX_API_HOST || '';
+export const MINIMAX_API_KEY = settingsConfig.MINIMAX_API_KEY || '';
+export const MINIMAX_API_HOST = envConfig.MINIMAX_API_HOST || '';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
-const HOME_DIR = process.env.HOME || os.homedir();
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(

@@ -13,9 +13,24 @@
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
 
-import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+
+const HOME_DIR = process.env.HOME || os.homedir();
+const SETTINGS_FILE = path.join(HOME_DIR, '.claude', 'settings.json');
+
+function readSettingsJson(): Record<string, string> {
+  try {
+    const content = fs.readFileSync(SETTINGS_FILE, 'utf-8');
+    const settings = JSON.parse(content);
+    return settings.env || {};
+  } catch {
+    return {};
+  }
+}
 
 export type AuthMode = 'api-key' | 'oauth';
 
@@ -27,16 +42,10 @@ export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
 ): Promise<Server> {
-  const secrets = readEnvFile([
-    'ANTHROPIC_API_KEY',
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    'ANTHROPIC_AUTH_TOKEN',
-    'ANTHROPIC_BASE_URL',
-  ]);
+  const secrets = readSettingsJson();
 
-  const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
-  const oauthToken =
-    secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
+  const oauthToken = secrets.ANTHROPIC_AUTH_TOKEN;
+  const authMode: AuthMode = oauthToken ? 'oauth' : 'oauth';
 
   const upstreamUrl = new URL(
     secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
@@ -62,20 +71,14 @@ export function startCredentialProxy(
         delete headers['keep-alive'];
         delete headers['transfer-encoding'];
 
-        if (authMode === 'api-key') {
-          // API key mode: inject x-api-key on every request
-          delete headers['x-api-key'];
-          headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
-        } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          // only when the container actually sends an Authorization header
-          // (exchange request + auth probes). Post-exchange requests use
-          // x-api-key only, so they pass through without token injection.
-          if (headers['authorization']) {
-            delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
-            }
+        // OAuth mode: replace placeholder Bearer token with the real one
+        // only when the container actually sends an Authorization header
+        // (exchange request + auth probes). Post-exchange requests use
+        // x-api-key only, so they pass through without token injection.
+        if (headers['authorization']) {
+          delete headers['authorization'];
+          if (oauthToken) {
+            headers['authorization'] = `Bearer ${oauthToken}`;
           }
         }
 
@@ -123,6 +126,6 @@ export function startCredentialProxy(
 
 /** Detect which auth mode the host is configured for. */
 export function detectAuthMode(): AuthMode {
-  const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
-  return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+  const secrets = readSettingsJson();
+  return secrets.ANTHROPIC_AUTH_TOKEN ? 'oauth' : 'oauth';
 }

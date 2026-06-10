@@ -26,6 +26,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'MINIMAX_API_HOST',
+  'DASHSCOPE_API_KEY',
 ]);
 
 export const ASSISTANT_NAME =
@@ -35,6 +36,7 @@ export const ASSISTANT_HAS_OWN_NUMBER =
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const MINIMAX_API_KEY = settingsConfig.MINIMAX_API_KEY || '';
 export const MINIMAX_API_HOST = envConfig.MINIMAX_API_HOST || '';
+export const DASHSCOPE_API_KEY = envConfig.DASHSCOPE_API_KEY || '';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 

@@ -18,6 +18,7 @@ import {
   TIMEZONE,
   MINIMAX_API_KEY,
   MINIMAX_API_HOST,
+  DASHSCOPE_API_KEY,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -340,6 +341,9 @@ function buildContainerArgs(
   }
   if (MINIMAX_API_HOST) {
     args.push('-e', `MINIMAX_API_HOST=${MINIMAX_API_HOST}`);
+  }
+  if (DASHSCOPE_API_KEY) {
+    args.push('-e', `DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}`);
   }
 
   // Run as host user so bind-mounted files are accessible.

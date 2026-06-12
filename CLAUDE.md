@@ -58,16 +58,13 @@ npm run build        # Compile TypeScript
 ```
 
 Service management:
-```bash
-# macOS (launchd)
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
 
-# Linux (systemd)
-systemctl --user start nanoclaw
-systemctl --user stop nanoclaw
-systemctl --user restart nanoclaw
+**Always use `./start-nanoclaw.sh` to (re)start the service.** Do NOT manipulate `node` processes directly (no manual `kill` of `node`, no direct `node dist/index.js &`, no `pkill node`). The script handles stopping the old instance, writing `nanoclaw.pid`, and starting a clean process. It also accepts `--debug` for debug-level logging.
+
+```bash
+./start-nanoclaw.sh          # start (or restart) the service
+./start-nanoclaw.sh --debug  # start with debug-level logging
+# To stop: kill $(cat /home/juzi/workspace/nanoclaw/nanoclaw.pid)
 ```
 
 ## Troubleshooting

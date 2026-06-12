@@ -214,9 +214,10 @@ class FeishuChannel implements Channel {
     if (this.botOpenId && openId === this.botOpenId) return;
 
     const isGroup = message.chat_type === 'group';
+    const isPrivate = message.chat_type === 'p2p';
 
-    // Add "了解" reaction to group messages
-    if (isGroup) {
+    // Add "了解" reaction to group and private chat messages
+    if (isGroup || isPrivate) {
       this.addReaction(message.message_id).catch((err) =>
         logger.warn(
           { err, messageId: message.message_id },

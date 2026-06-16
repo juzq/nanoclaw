@@ -17,9 +17,8 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
   MINIMAX_API_KEY,
-  MINIMAX_API_HOST,
-  DASHSCOPE_API_KEY,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -335,16 +334,28 @@ function buildContainerArgs(
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
-  // Pass MINIMAX_API_KEY and MINIMAX_API_HOST for minimax-coding-plan-mcp
+  // Re-read .env on every container start so config changes take effect
+  // without restarting the host process. Module-level imports of these
+  // values are frozen at load time and would go stale otherwise.
+  const runtimeEnv = readEnvFile(['MINIMAX_API_HOST', 'DASHSCOPE_API_KEY']);
+
   if (MINIMAX_API_KEY) {
     args.push('-e', `MINIMAX_API_KEY=${MINIMAX_API_KEY}`);
   }
-  if (MINIMAX_API_HOST) {
-    args.push('-e', `MINIMAX_API_HOST=${MINIMAX_API_HOST}`);
+  if (runtimeEnv.MINIMAX_API_HOST) {
+    args.push('-e', `MINIMAX_API_HOST=${runtimeEnv.MINIMAX_API_HOST}`);
   }
-  if (DASHSCOPE_API_KEY) {
-    args.push('-e', `DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}`);
+  if (runtimeEnv.DASHSCOPE_API_KEY) {
+    args.push('-e', `DASHSCOPE_API_KEY=${runtimeEnv.DASHSCOPE_API_KEY}`);
   }
+  logger.debug(
+    {
+      minimaxKeyLen: MINIMAX_API_KEY.length,
+      minimaxHostLen: (runtimeEnv.MINIMAX_API_HOST || '').length,
+      dashscopeKeyLen: (runtimeEnv.DASHSCOPE_API_KEY || '').length,
+    },
+    'Container env (lengths only)',
+  );
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

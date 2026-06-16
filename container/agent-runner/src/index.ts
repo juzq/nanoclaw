@@ -504,9 +504,6 @@ async function runQuery(
         'wanyi-watermark': {
           command: 'uvx',
           args: ['wanyi-watermark'],
-          env: {
-            DASHSCOPE_API_KEY: process.env.DASHSCOPE_API_KEY || '',
-          },
         },
       },
       hooks: {

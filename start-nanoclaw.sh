@@ -35,7 +35,11 @@ if [ -f "$SCRIPT_DIR/nanoclaw.pid" ]; then
 fi
 
 echo "Starting NanoClaw..."
-NODE_BIN="/home/juzi/.nvm/versions/node/v24.14.1/bin/node"
+NODE_BIN="$(command -v node)"
+if [ -z "$NODE_BIN" ]; then
+  echo "Error: node not found in PATH. Please ensure node is installed and accessible."
+  exit 1
+fi
 if [ -n "$DEBUG_MODE" ]; then
   LOG_LEVEL=debug nohup "$NODE_BIN" "$SCRIPT_DIR/dist/index.js" \
     >> "$SCRIPT_DIR/logs/nanoclaw.log" \

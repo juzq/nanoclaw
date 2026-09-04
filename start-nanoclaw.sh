@@ -1,11 +1,12 @@
 #!/bin/bash
 # start-nanoclaw.sh — Start NanoClaw without systemd
 # Usage: ./start-nanoclaw.sh [--debug]
-# To stop: kill \$(cat /home/juzi/workspace/nanoclaw/nanoclaw.pid)
+# To stop: kill $(cat "$(dirname "$0")/nanoclaw.pid")
 
 set -euo pipefail
 
-cd "/home/juzi/workspace/nanoclaw"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # Parse arguments
 DEBUG_MODE=""
@@ -24,8 +25,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Stop existing instance if running
-if [ -f "/home/juzi/workspace/nanoclaw/nanoclaw.pid" ]; then
-  OLD_PID=$(cat "/home/juzi/workspace/nanoclaw/nanoclaw.pid" 2>/dev/null || echo "")
+if [ -f "$SCRIPT_DIR/nanoclaw.pid" ]; then
+  OLD_PID=$(cat "$SCRIPT_DIR/nanoclaw.pid" 2>/dev/null || echo "")
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
     echo "Stopping existing NanoClaw (PID $OLD_PID)..."
     kill "$OLD_PID" 2>/dev/null || true
@@ -36,16 +37,16 @@ fi
 echo "Starting NanoClaw..."
 NODE_BIN="/home/juzi/.nvm/versions/node/v24.14.1/bin/node"
 if [ -n "$DEBUG_MODE" ]; then
-  LOG_LEVEL=debug nohup "$NODE_BIN" "/home/juzi/workspace/nanoclaw/dist/index.js" \
-    >> "/home/juzi/workspace/nanoclaw/logs/nanoclaw.log" \
-    2>> "/home/juzi/workspace/nanoclaw/logs/nanoclaw.error.log" &
+  LOG_LEVEL=debug nohup "$NODE_BIN" "$SCRIPT_DIR/dist/index.js" \
+    >> "$SCRIPT_DIR/logs/nanoclaw.log" \
+    2>> "$SCRIPT_DIR/logs/nanoclaw.error.log" &
   echo "Debug mode enabled"
 else
-  nohup "$NODE_BIN" "/home/juzi/workspace/nanoclaw/dist/index.js" \
-    >> "/home/juzi/workspace/nanoclaw/logs/nanoclaw.log" \
-    2>> "/home/juzi/workspace/nanoclaw/logs/nanoclaw.error.log" &
+  nohup "$NODE_BIN" "$SCRIPT_DIR/dist/index.js" \
+    >> "$SCRIPT_DIR/logs/nanoclaw.log" \
+    2>> "$SCRIPT_DIR/logs/nanoclaw.error.log" &
 fi
 
-echo $! > "/home/juzi/workspace/nanoclaw/nanoclaw.pid"
+echo $! > "$SCRIPT_DIR/nanoclaw.pid"
 echo "NanoClaw started (PID $!)"
-echo "Logs: tail -f /home/juzi/workspace/nanoclaw/logs/nanoclaw.log"
+echo "Logs: tail -f $SCRIPT_DIR/logs/nanoclaw.log"
